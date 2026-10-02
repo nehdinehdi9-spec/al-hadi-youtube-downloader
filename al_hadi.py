@@ -15,25 +15,28 @@ import tkinter as tk
 
 
 # =========================
-# إعدادات التطبيق
+# إعدادات التطبيق الأساسية
 # =========================
 WINDOW_WIDTH = 950
 WINDOW_HEIGHT = 1050
+
 DARK_BG = "#0b0f19"
 DARK_PANEL = "#121a2a"
 LIGHT_PANEL = "#171f2f"
 GOLD = "#cca43b"
 GOLD_DARK = "#a77e1f"
-GOLD_SOFT = "#d9bb6f"
-TEXT = "#f4f1ea"
-MUTED = "#b8b3a8"
+GOLD_SOFT = "#e4c977"
+TEXT = "#f5f3ee"
+MUTED = "#bab3a7"
 SUCCESS = "#7ed89a"
 DANGER = "#ff6b6b"
-BORDER = "#2b3246"
+BORDER = "#2e364c"
+BLUE = "#1d7bf2"
+BLUE_DEEP = "#155fc9"
+BLUE_LIGHT = "#63b3ff"
 
 
 def play_click_sound():
-    """تشغيل صوت النقر على الأزرار"""
     try:
         winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
     except Exception:
@@ -41,7 +44,6 @@ def play_click_sound():
 
 
 def get_desktop_path():
-    """الحصول على مسار سطح المكتب"""
     try:
         return str(Path.home() / "Desktop")
     except Exception:
@@ -49,7 +51,6 @@ def get_desktop_path():
 
 
 def ensure_download_folder(custom_path=None):
-    """التأكد من وجود مجلد التنزيل"""
     if custom_path and os.path.isdir(custom_path):
         return custom_path
 
@@ -60,7 +61,6 @@ def ensure_download_folder(custom_path=None):
 
 
 def get_clipboard_text():
-    """استخراج النص من الحافظة العام للنظام"""
     try:
         root = tk.Tk()
         root.withdraw()
@@ -76,8 +76,7 @@ def get_clipboard_text():
         return ""
 
 
-def is_valid_youtube_url(value: str) -> bool:
-    """التحقق من صحة رابط YouTube"""
+def is_valid_youtube_url(value):
     if not value or not isinstance(value, str):
         return False
     cleaned = value.strip()
@@ -90,6 +89,7 @@ def is_valid_youtube_url(value: str) -> bool:
         r"^(https?://)?m\.youtube\.com/watch\?v=[A-Za-z0-9_-]+",
         r"^(https?://)?music\.youtube\.com/watch\?v=[A-Za-z0-9_-]+",
     ]
+
     for pattern in patterns:
         if re.match(pattern, cleaned):
             return True
@@ -103,8 +103,7 @@ def is_valid_youtube_url(value: str) -> bool:
     return False
 
 
-def sanitize_filename(name: str) -> str:
-    """تنظيف اسم الملف من الأحرف غير المسموحة"""
+def sanitize_filename(name):
     if not name:
         return "download"
     invalid_chars = '<>:"/\\|?*'
@@ -115,7 +114,6 @@ def sanitize_filename(name: str) -> str:
 
 
 def find_ffmpeg():
-    """البحث عن FFmpeg في المسارات الشائعة"""
     candidates = [
         "ffmpeg",
         r"C:\ffmpeg\bin\ffmpeg.exe",
@@ -131,8 +129,7 @@ def find_ffmpeg():
     return None
 
 
-def format_path_for_display(path: str, max_length: int = 60) -> str:
-    """تنسيق المسار للعرض في واجهة المستخدم"""
+def format_path_for_display(path, max_length=55):
     if not path:
         return "غير محدد"
     if len(path) <= max_length:
@@ -140,28 +137,45 @@ def format_path_for_display(path: str, max_length: int = 60) -> str:
     return "..." + path[-max_length:]
 
 
+def create_verification_badge(parent, width=22, height=22, text="✓"):
+    badge = ctk.CTkFrame(
+        parent,
+        width=width,
+        height=height,
+        corner_radius=11,
+        fg_color=BLUE,
+        border_width=2,
+        border_color=BLUE_LIGHT
+    )
+    badge.grid_propagate(False)
+    badge_label = ctk.CTkLabel(
+        badge,
+        text=text,
+        font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+        text_color="#f0f7ff",
+        fg_color="transparent"
+    )
+    badge_label.place(relx=0.5, rely=0.5, anchor="center")
+    return badge
+
+
 class DownloadWorker:
-    """عامل التنزيل في خيط منفصل"""
-    
-    def __init__(self, app, url, file_type, download_path):
+    def __init__(self, app, url, download_format, download_path):
         self.app = app
         self.url = url
-        self.file_type = file_type
+        self.download_format = download_format
         self.download_path = download_path
         self._stop_event = threading.Event()
         self._thread = None
 
     def start(self):
-        """بدء خيط التنزيل"""
         self._thread = threading.Thread(target=self.run, daemon=True)
         self._thread.start()
 
     def stop(self):
-        """إيقاف التنزيل"""
         self._stop_event.set()
 
     def run(self):
-        """تشغيل عملية التنزيل الرئيسية"""
         try:
             self.app.set_status("جارٍ تجهيز الوسائط...")
             self.app.update_progress(2, "جارٍ تجهيز الوسائط...")
@@ -169,7 +183,6 @@ class DownloadWorker:
             download_dir = ensure_download_folder(self.download_path)
             os.makedirs(download_dir, exist_ok=True)
 
-            # إعدادات yt-dlp
             ydl_opts = {
                 "outtmpl": os.path.join(download_dir, "%(title)s.%(ext)s"),
                 "noplaylist": True,
@@ -181,8 +194,7 @@ class DownloadWorker:
                 "socket_timeout": 30,
             }
 
-            # تحديد الصيغة بناءً على نوع التحميل
-            if self.file_type == "audio":
+            if self.download_format == "mp3":
                 ydl_opts["format"] = "bestaudio/best"
                 ydl_opts["postprocessors"] = [
                     {
@@ -191,7 +203,7 @@ class DownloadWorker:
                         "preferredquality": "192",
                     }
                 ]
-            else:  # video
+            else:
                 ydl_opts["format"] = "best[ext=mp4]/best"
                 ydl_opts["postprocessors"] = []
 
@@ -204,10 +216,9 @@ class DownloadWorker:
                 self.app.update_progress(0, "تم إلغاء العملية.")
                 return
 
-            # تنزيل الفيديو
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 self.app.set_status("جارٍ معالجة الفيديو...")
-                self.app.update_progress(5, "جارٍ تحميل الفيديو...")
+                self.app.update_progress(5, "جارٍ معالجة الفيديو...")
                 ydl.download([self.url])
 
             self.app.set_status("اكتمل التحميل بنجاح ✓")
@@ -215,14 +226,13 @@ class DownloadWorker:
             self.app.on_download_finished()
 
         except Exception as exc:
-            error_msg = str(exc)[:200]
+            error_msg = str(exc)[:220]
             print(f"[ERROR] Download failed: {error_msg}")
             self.app.set_status(f"حدث خطأ: {error_msg}")
             self.app.update_progress(0, f"فشل التحميل: {error_msg}")
             self.app.on_download_failed()
 
     def _progress_hook(self, d):
-        """معالج تحديثات التقدم"""
         if self._stop_event.is_set():
             raise Exception("Download cancelled by user")
 
@@ -230,8 +240,6 @@ class DownloadWorker:
             if d.get("status") == "downloading":
                 percent_str = d.get("_percent_str", "0%").strip()
                 percent_value = 0
-                
-                # استخراج القيمة العددية من النسبة المئوية
                 if "%" in percent_str:
                     try:
                         percent_value = float(percent_str.replace("%", "").strip())
@@ -254,11 +262,8 @@ class DownloadWorker:
 
 
 class HadiApp(ctk.CTk):
-    """تطبيق الهادي الرئيسي"""
-    
     def __init__(self):
         super().__init__()
-        
         self.title("الهادي")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -271,7 +276,6 @@ class HadiApp(ctk.CTk):
         self._setup_ui()
 
     def _setup_ui(self):
-        """إعداد واجهة المستخدم"""
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -285,22 +289,42 @@ class HadiApp(ctk.CTk):
         main.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
         main.grid_columnconfigure(0, weight=1)
-        for i in range(14):
+        for i in range(15):
             main.grid_rowconfigure(i, weight=0)
-        main.grid_rowconfigure(12, weight=1)
+        main.grid_rowconfigure(14, weight=1)
 
-        # العنوان الرئيسي مع التأثير النابض
+        # =========================
+        # Header: title + blue badge
+        # =========================
+        title_row = ctk.CTkFrame(main, fg_color="transparent")
+        title_row.grid(row=0, column=0, pady=(26, 8), sticky="n")
+
+        self.title_shadow = ctk.CTkLabel(
+            title_row,
+            text="الهادي",
+            font=ctk.CTkFont(family="Segoe UI", size=60, weight="bold"),
+            text_color="#5d430e",
+            fg_color="transparent"
+        )
+        self.title_shadow.grid(row=0, column=0, padx=(0, 0), pady=(5, 0), sticky="n")
+
         self.title_label = ctk.CTkLabel(
-            main,
-            text="🔵 الهَادِي",
-            font=ctk.CTkFont(family="Segoe UI", size=42, weight="bold"),
+            title_row,
+            text="الهادي",
+            font=ctk.CTkFont(family="Segoe UI", size=60, weight="bold"),
             text_color=GOLD,
             fg_color="transparent"
         )
-        self.title_label.grid(row=0, column=0, padx=20, pady=(30, 10), sticky="n")
+        self.title_label.grid(row=0, column=0, padx=(0, 0), pady=(0, 0), sticky="n")
+
+        self.verification_badge = create_verification_badge(title_row, width=30, height=30, text="✓")
+        self.verification_badge.grid(row=0, column=1, padx=(14, 0), pady=(10, 0), sticky="n")
+
         self.pulse_animation()
 
-        # تسمية حقل الرابط
+        # =========================
+        # URL row
+        # =========================
         url_label = ctk.CTkLabel(
             main,
             text="رابط الفيديو على يوتيوب",
@@ -310,16 +334,15 @@ class HadiApp(ctk.CTk):
         )
         url_label.grid(row=1, column=0, padx=28, pady=(18, 8), sticky="w")
 
-        # صف حقل الإدخال مع زر اللصق
         entry_row = ctk.CTkFrame(main, fg_color="transparent")
-        entry_row.grid(row=2, column=0, padx=28, pady=(0, 6), sticky="ew")
+        entry_row.grid(row=2, column=0, padx=28, pady=(0, 8), sticky="ew")
         entry_row.grid_columnconfigure(0, weight=1)
         entry_row.grid_columnconfigure(1, weight=0)
 
         self.url_entry = ctk.CTkEntry(
             entry_row,
             width=600,
-            height=52,
+            height=54,
             border_width=1,
             fg_color=DARK_PANEL,
             border_color=BORDER,
@@ -327,24 +350,28 @@ class HadiApp(ctk.CTk):
             placeholder_text="https://www.youtube.com/watch?v=...",
             font=ctk.CTkFont(family="Segoe UI", size=17),
         )
-        self.url_entry.grid(row=0, column=0, padx=(0, 12), pady=0, sticky="ew")
+        self.url_entry.grid(row=0, column=0, padx=(0, 12), sticky="ew")
 
-        # زر لصق الرابط
         self.paste_btn = ctk.CTkButton(
             entry_row,
             text="📋 لصق الرابط",
-            width=120,
-            height=52,
+            width=130,
+            height=54,
             fg_color=GOLD,
             hover_color=GOLD_DARK,
             text_color="#101419",
+            border_color="#f5d27a",
+            border_width=2,
+            corner_radius=16,
             font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            corner_radius=12,
             command=self.paste_from_clipboard
         )
-        self.paste_btn.grid(row=0, column=1, padx=0, pady=0, sticky="e")
+        self.paste_btn.grid(row=0, column=1, sticky="e")
+        self._bind_hover_glow(self.paste_btn)
 
-        # عرض مسار الحفظ الافتراضي
+        # =========================
+        # Download path block
+        # =========================
         path_text = "📂 مسار حفظ الملفات: سطح المكتب ➔ مجلد (تنزيلات الهادي)"
         self.path_label = ctk.CTkLabel(
             main,
@@ -352,11 +379,10 @@ class HadiApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=14),
             text_color=GOLD_SOFT,
             anchor="w",
-            wraplength=750
+            wraplength=760
         )
-        self.path_label.grid(row=3, column=0, padx=28, pady=(2, 6), sticky="w")
+        self.path_label.grid(row=3, column=0, padx=28, pady=(4, 4), sticky="w")
 
-        # صف مسار التنزيل النشط مع زر التغيير
         path_row = ctk.CTkFrame(main, fg_color="transparent")
         path_row.grid(row=4, column=0, padx=28, pady=(0, 12), sticky="ew")
         path_row.grid_columnconfigure(0, weight=1)
@@ -370,30 +396,34 @@ class HadiApp(ctk.CTk):
             anchor="w",
             wraplength=700
         )
-        self.active_path_label.grid(row=0, column=0, padx=(0, 12), pady=0, sticky="w")
+        self.active_path_label.grid(row=0, column=0, padx=(0, 12), sticky="w")
 
-        # زر تغيير المجلد
         self.change_path_btn = ctk.CTkButton(
             path_row,
             text="📂 تغيير المجلد",
-            width=130,
-            height=40,
+            width=140,
+            height=42,
             fg_color=GOLD,
             hover_color=GOLD_DARK,
             text_color="#101419",
+            border_color="#f5d27a",
+            border_width=2,
+            corner_radius=14,
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            corner_radius=10,
             command=self.change_download_path
         )
-        self.change_path_btn.grid(row=0, column=1, padx=0, pady=0, sticky="e")
+        self.change_path_btn.grid(row=0, column=1, sticky="e")
+        self._bind_hover_glow(self.change_path_btn)
 
-        # إطار اختيار الصيغة
-        format_frame = ctk.CTkFrame(main, fg_color=LIGHT_PANEL, corner_radius=20)
-        format_frame.grid(row=5, column=0, padx=28, pady=(6, 12), sticky="ew")
+        # =========================
+        # Format selection
+        # =========================
+        format_frame = ctk.CTkFrame(main, fg_color=LIGHT_PANEL, corner_radius=24)
+        format_frame.grid(row=5, column=0, padx=28, pady=(8, 12), sticky="ew")
+
         format_frame.grid_columnconfigure(0, weight=1)
         format_frame.grid_columnconfigure(1, weight=1)
 
-        # زر الفيديو
         self.video_btn = ctk.CTkButton(
             format_frame,
             text="🎞️ فيديو بأعلى جودة (MP4)",
@@ -401,29 +431,34 @@ class HadiApp(ctk.CTk):
             fg_color=GOLD,
             hover_color=GOLD_DARK,
             text_color="#101419",
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+            border_color="#f5d27a",
+            border_width=2,
             corner_radius=18,
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
             command=self.select_video_format
         )
         self.video_btn.grid(row=0, column=0, padx=12, pady=12, sticky="ew")
+        self._bind_hover_glow(self.video_btn)
 
-        # زر الصوت
         self.audio_btn = ctk.CTkButton(
             format_frame,
             text="🎵 صوت نقي (MP3)",
             height=58,
             fg_color=LIGHT_PANEL,
-            hover_color="#1d2638",
+            hover_color="#1f2b3a",
             text_color=TEXT,
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-            corner_radius=18,
-            border_width=1,
             border_color=BORDER,
+            border_width=2,
+            corner_radius=18,
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
             command=self.select_audio_format
         )
         self.audio_btn.grid(row=0, column=1, padx=12, pady=12, sticky="ew")
+        self._bind_hover_glow(self.audio_btn)
 
-        # تسمية حالة التشغيل
+        # =========================
+        # Status and progress
+        # =========================
         status_title = ctk.CTkLabel(
             main,
             text="حالة التشغيل",
@@ -433,7 +468,6 @@ class HadiApp(ctk.CTk):
         )
         status_title.grid(row=6, column=0, padx=28, pady=(10, 4), sticky="w")
 
-        # تسمية حالة التشغيل الديناميكية
         self.status_var = ctk.StringVar(value="جاهز للاستقبال")
         self.status_label = ctk.CTkLabel(
             main,
@@ -441,11 +475,10 @@ class HadiApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=16),
             text_color=MUTED,
             anchor="w",
-            wraplength=750
+            wraplength=760
         )
         self.status_label.grid(row=7, column=0, padx=28, pady=(0, 8), sticky="w")
 
-        # شريط التقدم
         self.progress_var = ctk.DoubleVar(value=0)
         self.progress_bar = ctk.CTkProgressBar(
             main,
@@ -459,7 +492,6 @@ class HadiApp(ctk.CTk):
         )
         self.progress_bar.grid(row=8, column=0, padx=28, pady=(8, 12), sticky="ew")
 
-        # تسمية النسبة المئوية
         self.progress_percent_label = ctk.CTkLabel(
             main,
             text="0%",
@@ -469,7 +501,9 @@ class HadiApp(ctk.CTk):
         )
         self.progress_percent_label.grid(row=8, column=0, padx=28, pady=(8, 12), sticky="e")
 
-        # زر التنزيل الرئيسي
+        # =========================
+        # Main download button
+        # =========================
         self.download_btn = ctk.CTkButton(
             main,
             text="⬇️ تنزيل الآن",
@@ -477,46 +511,95 @@ class HadiApp(ctk.CTk):
             fg_color=GOLD,
             hover_color=GOLD_DARK,
             text_color="#101419",
-            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            border_color="#f5d27a",
+            border_width=2,
             corner_radius=18,
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
             command=self.start_download
         )
         self.download_btn.grid(row=9, column=0, padx=28, pady=(10, 10), sticky="ew")
+        self._bind_hover_glow(self.download_btn)
 
-        # فاصل فارغ للتوسيع
+        # footer spacer
         spacer = ctk.CTkLabel(main, text="", fg_color="transparent")
         spacer.grid(row=12, column=0, sticky="nsew")
 
-        # شارة التذييل
-        self.footer_badge = ctk.CTkLabel(
-            main,
-            text="المطور: mehdi 🔵",
+        # =========================
+        # Footer: exact Arabic brand
+        # =========================
+        footer_row = ctk.CTkFrame(main, fg_color="transparent")
+        footer_row.grid(row=13, column=0, padx=28, pady=(8, 18), sticky="ew")
+
+        footer_row.grid_columnconfigure(0, weight=1)
+        footer_row.grid_columnconfigure(1, weight=0)
+        footer_row.grid_columnconfigure(2, weight=0)
+
+        footer_label = ctk.CTkLabel(
+            footer_row,
+            text="تم صنع هذا البرنامج بواسطة المطور",
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
-            text_color=GOLD,
+            text_color="#f1e9d9",
             anchor="e"
         )
-        self.footer_badge.grid(row=13, column=0, padx=28, pady=(6, 18), sticky="e")
+        footer_label.grid(row=0, column=0, sticky="e")
 
-        # تحديد الصيغة الأولية
+        badge = create_verification_badge(footer_row, width=24, height=24, text="✓")
+        badge.grid(row=0, column=1, padx=(8, 6), sticky="e")
+
+        mehdi_label = ctk.CTkLabel(
+            footer_row,
+            text="MEHDI",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            text_color=BLUE_LIGHT,
+            anchor="e"
+        )
+        mehdi_label.grid(row=0, column=2, sticky="e")
+
         self.select_video_format()
 
+    def _bind_hover_glow(self, button):
+        original_fg = button.cget("fg_color")
+        original_border = button.cget("border_color")
+        original_text = button.cget("text_color")
+
+        def on_enter(event=None):
+            try:
+                button.configure(fg_color=button.cget("hover_color"))
+                button.configure(border_color="#fff0b3")
+                button.configure(text_color="#101419")
+                try:
+                    button.lift()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        def on_leave(event=None):
+            try:
+                button.configure(fg_color=original_fg)
+                button.configure(border_color=original_border)
+                button.configure(text_color=original_text)
+            except Exception:
+                pass
+
+        button.bind("<Enter>", on_enter)
+        button.bind("<Leave>", on_leave)
+
     def pulse_animation(self):
-        """تأثير نبض الذهب على العنوان"""
         try:
             if not self.winfo_exists():
                 return
-            current_color = self.title_label.cget("text_color")
-            new_color = GOLD_SOFT if current_color == GOLD else GOLD
-            self.title_label.configure(text_color=new_color)
-            self.after(650, self.pulse_animation)
+            current = self.title_label.cget("text_color")
+            next_color = GOLD_SOFT if current == GOLD else GOLD
+            self.title_label.configure(text_color=next_color)
+            self.title_shadow.configure(text_color="#5d430e")
+            self.after(700, self.pulse_animation)
         except Exception:
             pass
 
     def paste_from_clipboard(self):
-        """لصق النص من الحافظة إلى حقل الإدخال"""
         play_click_sound()
         clipboard_content = get_clipboard_text()
-        
         if clipboard_content:
             self.url_entry.delete(0, tk.END)
             self.url_entry.insert(0, clipboard_content)
@@ -527,9 +610,7 @@ class HadiApp(ctk.CTk):
             self.status_label.configure(text_color=MUTED)
 
     def change_download_path(self):
-        """تغيير مسار التنزيل المخصص"""
         play_click_sound()
-        
         try:
             selected_path = filedialog.askdirectory(
                 title="اختر مجلد التنزيل",
@@ -541,7 +622,7 @@ class HadiApp(ctk.CTk):
                 self.active_path_label.configure(
                     text=f"مسار التنزيل الحالي: {format_path_for_display(selected_path, 50)}"
                 )
-                self.set_status(f"تم تغيير المجلد بنجاح")
+                self.set_status("تم تغيير المجلد بنجاح")
                 self.status_label.configure(text_color=SUCCESS)
             else:
                 self.set_status("لم يتم اختيار مجلد صحيح.")
@@ -551,47 +632,46 @@ class HadiApp(ctk.CTk):
             self.status_label.configure(text_color=DANGER)
 
     def select_video_format(self):
-        """اختيار صيغة الفيديو (MP4)"""
         play_click_sound()
         self.current_format = "video"
         self.video_btn.configure(
             fg_color=GOLD,
             text_color="#101419",
             hover_color=GOLD_DARK,
-            border_width=0
+            border_color="#f5d27a",
+            border_width=2
         )
         self.audio_btn.configure(
             fg_color=LIGHT_PANEL,
             text_color=TEXT,
             hover_color="#1d2638",
-            border_width=1,
-            border_color=BORDER
+            border_color=BORDER,
+            border_width=2
         )
         self.status_var.set("تم تحديد: فيديو بأعلى جودة (MP4)")
         self.status_label.configure(text_color=SUCCESS)
 
     def select_audio_format(self):
-        """اختيار صيغة الصوت (MP3)"""
         play_click_sound()
         self.current_format = "audio"
         self.audio_btn.configure(
             fg_color=GOLD,
             text_color="#101419",
             hover_color=GOLD_DARK,
-            border_width=0
+            border_color="#f5d27a",
+            border_width=2
         )
         self.video_btn.configure(
             fg_color=LIGHT_PANEL,
             text_color=TEXT,
             hover_color="#1d2638",
-            border_width=1,
-            border_color=BORDER
+            border_color=BORDER,
+            border_width=2
         )
         self.status_var.set("تم تحديد: صوت نقي (MP3)")
         self.status_label.configure(text_color=SUCCESS)
 
     def set_status(self, msg):
-        """تحديث رسالة الحالة"""
         if not self.winfo_exists():
             return
         self.status_var.set(msg)
@@ -599,7 +679,6 @@ class HadiApp(ctk.CTk):
         self.status_label.configure(text_color=DANGER if is_error else TEXT)
 
     def update_progress(self, percent, status=None):
-        """تحديث شريط التقدم والنسبة المئوية"""
         try:
             if not self.winfo_exists():
                 return
@@ -612,7 +691,6 @@ class HadiApp(ctk.CTk):
             pass
 
     def on_download_finished(self):
-        """استدعاء عند انتهاء التحميل بنجاح"""
         try:
             if self.winfo_exists():
                 self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
@@ -621,7 +699,6 @@ class HadiApp(ctk.CTk):
             pass
 
     def on_download_failed(self):
-        """استدعاء عند فشل التحميل"""
         try:
             if self.winfo_exists():
                 self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
@@ -629,7 +706,6 @@ class HadiApp(ctk.CTk):
             pass
 
     def start_download(self):
-        """بدء عملية التحميل"""
         play_click_sound()
 
         url = self.url_entry.get().strip()
@@ -639,20 +715,19 @@ class HadiApp(ctk.CTk):
             self.update_progress(0, "يرجى إدخال رابط YouTube صحيح.")
             return
 
-        if self.download_worker is not None and \
-           self.download_worker._thread is not None and \
-           self.download_worker._thread.is_alive():
+        if self.download_worker is not None and self.download_worker._thread is not None and self.download_worker._thread.is_alive():
             self.set_status("هناك عملية تنزيل جارية بالفعل.")
             self.status_label.configure(text_color=MUTED)
             return
 
         self.download_btn.configure(state="disabled", text="جارٍ التحميل...")
         self.update_progress(0, "جارٍ التحقق من الرابط...")
-        
+
+        download_format = "mp3" if self.current_format == "audio" else "mp4"
         self.download_worker = DownloadWorker(
             self,
             url,
-            self.current_format,
+            download_format,
             self.custom_download_path
         )
         self.download_worker.start()
