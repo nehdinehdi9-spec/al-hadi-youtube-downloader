@@ -8,6 +8,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from tkinter import filedialog
 
 import customtkinter as ctk
 import yt_dlp
@@ -19,8 +20,8 @@ import tkinter as tk
 # إعدادات التطبيق
 # =========================
 APP_NAME = "الهادي"
-WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 900
+WINDOW_WIDTH = 950
+WINDOW_HEIGHT = 1050
 DARK_BG = "#0b0f19"
 DARK_PANEL = "#121a2a"
 LIGHT_PANEL = "#171f2f"
@@ -50,7 +51,10 @@ def get_desktop_path():
         return str(Path.home())
 
 
-def ensure_download_folder():
+def ensure_download_folder(custom_path=None):
+    if custom_path and os.path.isdir(custom_path):
+        return custom_path
+    
     desktop = Path(get_desktop_path())
     folder = desktop / "تنزيلات الهادي"
     folder.mkdir(parents=True, exist_ok=True)
@@ -102,7 +106,6 @@ def is_valid_youtube_url(value: str) -> bool:
     for pattern in patterns:
         if re.match(pattern, cleaned):
             return True
-    # دعم روابط طويلة، التحقق من وجود "youtube" في الرابط
     try:
         parsed = urlparse(cleaned)
         if parsed.netloc and ("youtube" in parsed.netloc or "youtu.be" in parsed.netloc):
@@ -139,14 +142,24 @@ def find_ffmpeg():
     return None
 
 
+def format_path_for_display(path: str, max_length: int = 60) -> str:
+    """تنسيق المسار للعرض"""
+    if not path:
+        return "غير محدد"
+    if len(path) <= max_length:
+        return path
+    return "..." + path[-max_length:]
+
+
 # =========================
 # Downloader Thread
 # =========================
 class DownloadWorker:
-    def __init__(self, app, url, file_type):
+    def __init__(self, app, url, file_type, download_path):
         self.app = app
         self.url = url
         self.file_type = file_type
+        self.download_path = download_path
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -162,32 +175,41 @@ class DownloadWorker:
             self.app.set_status("جارٍ تجهيز الوسائط...")
             self.app.update_progress(2, "جارٍ تجهيز الوسائط...")
 
-            download_dir = ensure_download_folder()
+            download_dir = ensure_download_folder(self.download_path)
+            if not os.path.isdir(download_dir):
+                os.makedirs(download_dir, exist_ok=True)
 
+            # Configure yt-dlp options
             ydl_opts = {
                 "outtmpl": os.path.join(download_dir, "%(title)s.%(ext)s"),
                 "noplaylist": True,
-                "quiet": True,
-                "no_warnings": True,
+                "quiet": False,
+                "no_warnings": False,
                 "ignoreerrors": False,
                 "progress_hooks": [self._progress_hook],
-                "paths": {"home": download_dir},
                 "extract_flat": False,
-                "format": "bv*+ba/b" if self.file_type == "video" else "bestaudio/best",
-                "postprocessors": [],
-                "ffmpeg_location": find_ffmpeg(),
+                "socket_timeout": 30,
+                "retries": {"DEFAULT": 3, "http": 5, "https": 5},
             }
 
+            # Set format based on file type
             if self.file_type == "video":
                 ydl_opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
                 ydl_opts["merge_output_format"] = "mp4"
-            else:
+                ydl_opts["postprocessors"] = []
+            else:  # audio/MP3
                 ydl_opts["format"] = "bestaudio/best"
-                ydl_opts["postprocessors"] = [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "0",
-                }]
+                ydl_opts["postprocessors"] = [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ]
+
+            ffmpeg_location = find_ffmpeg()
+            if ffmpeg_location:
+                ydl_opts["ffmpeg_location"] = ffmpeg_location
 
             if self._stop_event.is_set():
                 self.app.set_status("تم إلغاء العملية.")
@@ -195,44 +217,43 @@ class DownloadWorker:
                 return
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
-                if not info:
-                    raise ValueError("تعذّر استرجاع معلومات الفيديو.")
-                title = info.get("title") or "الهادي"
-                safe_title = sanitize_filename(title)
-                ydl.params["outtmpl"] = os.path.join(download_dir, f"{safe_title}.%(ext)s")
-
-                if self.file_type == "audio":
-                    ydl.download([self.url])
-                else:
-                    ydl.download([self.url])
+                self.app.set_status("جارٍ معالجة الفيديو...")
+                self.app.update_progress(5, "جارٍ معالجة الفيديو...")
+                
+                ydl.download([self.url])
 
             self.app.set_status("اكتمل التحميل بنجاح.")
             self.app.update_progress(100, "اكتمل التحميل بنجاح.")
             self.app.on_download_finished()
         except Exception as exc:
-            error_msg = str(exc)[:200]
+            error_msg = str(exc)[:250]
+            print(f"[ERROR] {error_msg}")
             self.app.set_status(f"حدث خطأ: {error_msg}")
             self.app.update_progress(0, f"فشل التحميل: {error_msg}")
             self.app.on_download_failed()
 
     def _progress_hook(self, d):
         if self._stop_event.is_set():
-            return
+            raise Exception("Download cancelled by user")
 
         if d.get("status") == "downloading":
-            percent = d.get("_percent_str", "0%")
             try:
-                percent_value = float(percent.strip("%"))
-            except ValueError:
+                percent_str = d.get("_percent_str", "0%").strip()
+                percent_value = float(percent_str.rstrip("%")) if "%" in percent_str else 0
+                percent_value = max(0, min(percent_value, 100))
+            except (ValueError, AttributeError):
                 percent_value = 0
-            speed = d.get("_speed_str", "...")
-            self.app.update_progress(int(percent_value), f"جارٍ التنزيل: {percent} - {speed}")
+
+            speed = d.get("_speed_str", "...").strip() if d.get("_speed_str") else "..."
+            self.app.update_progress(int(percent_value), f"جارٍ التنزيل: {percent_str} - {speed}")
+
         elif d.get("status") == "finished":
-            self.app.update_progress(98, "جارٍ تجهيز الملف النهائي...")
+            self.app.update_progress(95, "جارٍ معالجة الملف...")
+
         elif d.get("status") == "error":
-            self.app.set_status("حدثت مشكلة أثناء التنزيل.")
-            self.app.update_progress(0, "حدثت مشكلة أثناء التنزيل.")
+            error = d.get("error", "Unknown error")
+            self.app.set_status(f"خطأ في التنزيل: {str(error)[:100]}")
+            self.app.update_progress(0, f"خطأ في التنزيل: {str(error)[:100]}")
 
 
 # =========================
@@ -249,6 +270,7 @@ class HadiApp(ctk.CTk):
 
         self.download_worker = None
         self.current_format = "video"
+        self.custom_download_path = ensure_download_folder(None)
 
         self._setup_ui()
 
@@ -266,17 +288,9 @@ class HadiApp(ctk.CTk):
         main.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(0, weight=0)
-        main.grid_rowconfigure(1, weight=0)
-        main.grid_rowconfigure(2, weight=0)
-        main.grid_rowconfigure(3, weight=0)
-        main.grid_rowconfigure(4, weight=0)
-        main.grid_rowconfigure(5, weight=0)
-        main.grid_rowconfigure(6, weight=0)
-        main.grid_rowconfigure(7, weight=0)
-        main.grid_rowconfigure(8, weight=0)
-        main.grid_rowconfigure(9, weight=1)
-        main.grid_rowconfigure(10, weight=0)
+        for i in range(15):
+            main.grid_rowconfigure(i, weight=0)
+        main.grid_rowconfigure(12, weight=1)
 
         # Header
         self.title_label = ctk.CTkLabel(
@@ -335,9 +349,7 @@ class HadiApp(ctk.CTk):
         self.paste_btn.grid(row=0, column=1, padx=0, pady=0, sticky="e")
 
         # Download Path Display
-        download_path = ensure_download_folder()
-        desktop_name = Path.home() / "Desktop"
-        path_text = f"📂 مسار حفظ الملفات: سطح المكتب ➔ مجلد (تنزيلات الهادي)"
+        path_text = "📂 مسار حفظ الملفات: سطح المكتب ➔ مجلد (تنزيلات الهادي)"
         
         self.path_label = ctk.CTkLabel(
             main,
@@ -347,11 +359,41 @@ class HadiApp(ctk.CTk):
             anchor="w",
             wraplength=750
         )
-        self.path_label.grid(row=3, column=0, padx=28, pady=(2, 12), sticky="w")
+        self.path_label.grid(row=3, column=0, padx=28, pady=(2, 6), sticky="w")
+
+        # Active Download Path with Change Button Row
+        path_row = ctk.CTkFrame(main, fg_color="transparent")
+        path_row.grid(row=4, column=0, padx=28, pady=(0, 12), sticky="ew")
+        path_row.grid_columnconfigure(0, weight=1)
+        path_row.grid_columnconfigure(1, weight=0)
+
+        self.active_path_label = ctk.CTkLabel(
+            path_row,
+            text=f"مسار التنزيل الحالي: {format_path_for_display(self.custom_download_path, 50)}",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            text_color=MUTED,
+            anchor="w",
+            wraplength=700
+        )
+        self.active_path_label.grid(row=0, column=0, padx=(0, 12), pady=0, sticky="w")
+
+        self.change_path_btn = ctk.CTkButton(
+            path_row,
+            text="📂 تغيير المجلد",
+            width=130,
+            height=40,
+            fg_color=GOLD,
+            hover_color=GOLD_DARK,
+            text_color="#101419",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            corner_radius=10,
+            command=self.change_download_path
+        )
+        self.change_path_btn.grid(row=0, column=1, padx=0, pady=0, sticky="e")
 
         # Format switch
         format_frame = ctk.CTkFrame(main, fg_color=LIGHT_PANEL, corner_radius=20)
-        format_frame.grid(row=4, column=0, padx=28, pady=(6, 12), sticky="ew")
+        format_frame.grid(row=5, column=0, padx=28, pady=(6, 12), sticky="ew")
 
         format_frame.grid_columnconfigure(0, weight=1)
         format_frame.grid_columnconfigure(1, weight=1)
@@ -392,7 +434,7 @@ class HadiApp(ctk.CTk):
             text_color=TEXT,
             anchor="w"
         )
-        status_title.grid(row=5, column=0, padx=28, pady=(10, 4), sticky="w")
+        status_title.grid(row=6, column=0, padx=28, pady=(10, 4), sticky="w")
 
         self.status_var = ctk.StringVar(value="جاهز للاستقبال")
         self.status_label = ctk.CTkLabel(
@@ -403,7 +445,7 @@ class HadiApp(ctk.CTk):
             anchor="w",
             wraplength=750
         )
-        self.status_label.grid(row=6, column=0, padx=28, pady=(0, 8), sticky="w")
+        self.status_label.grid(row=7, column=0, padx=28, pady=(0, 8), sticky="w")
 
         self.progress_var = ctk.DoubleVar(value=0)
         self.progress_bar = ctk.CTkProgressBar(
@@ -416,7 +458,7 @@ class HadiApp(ctk.CTk):
             border_color=BORDER,
             fg_color="#1a2334",
         )
-        self.progress_bar.grid(row=7, column=0, padx=28, pady=(8, 12), sticky="ew")
+        self.progress_bar.grid(row=8, column=0, padx=28, pady=(8, 12), sticky="ew")
 
         self.progress_percent_label = ctk.CTkLabel(
             main,
@@ -425,7 +467,7 @@ class HadiApp(ctk.CTk):
             text_color=GOLD_SOFT,
             anchor="e"
         )
-        self.progress_percent_label.grid(row=7, column=0, padx=28, pady=(8, 12), sticky="e")
+        self.progress_percent_label.grid(row=8, column=0, padx=28, pady=(8, 12), sticky="e")
 
         # Download button
         self.download_btn = ctk.CTkButton(
@@ -439,7 +481,11 @@ class HadiApp(ctk.CTk):
             corner_radius=18,
             command=self.start_download
         )
-        self.download_btn.grid(row=8, column=0, padx=28, pady=(10, 10), sticky="ew")
+        self.download_btn.grid(row=9, column=0, padx=28, pady=(10, 10), sticky="ew")
+
+        # Spacer
+        spacer = ctk.CTkLabel(main, text="", fg_color="transparent")
+        spacer.grid(row=12, column=0, sticky="nsew")
 
         # Footer badge
         self.footer_badge = ctk.CTkLabel(
@@ -449,7 +495,7 @@ class HadiApp(ctk.CTk):
             text_color=GOLD,
             anchor="e"
         )
-        self.footer_badge.grid(row=10, column=0, padx=28, pady=(6, 18), sticky="e")
+        self.footer_badge.grid(row=13, column=0, padx=28, pady=(6, 18), sticky="e")
 
         # Set initial format
         self.select_video_format()
@@ -457,12 +503,14 @@ class HadiApp(ctk.CTk):
     def pulse_animation(self):
         """تأثير نبض الذهب على العنوان"""
         try:
+            if not self.winfo_exists():
+                return
             current_color = self.title_label.cget("text_color")
             if current_color == GOLD:
                 self.title_label.configure(text_color=GOLD_SOFT)
             else:
                 self.title_label.configure(text_color=GOLD)
-            self.title_label.after(650, self.pulse_animation)
+            self.after(650, self.pulse_animation)
         except Exception:
             pass
 
@@ -470,7 +518,7 @@ class HadiApp(ctk.CTk):
         """لصق النص من الحافظة إلى حقل الإدخال"""
         play_click_sound()
         clipboard_content = get_clipboard_text()
-        
+
         if clipboard_content:
             self.url_entry.delete(0, tk.END)
             self.url_entry.insert(0, clipboard_content)
@@ -479,6 +527,30 @@ class HadiApp(ctk.CTk):
         else:
             self.set_status("الحافظة فارغة أو لا تحتوي على نص.")
             self.status_label.configure(text_color=MUTED)
+
+    def change_download_path(self):
+        """تغيير مسار التنزيل المخصص"""
+        play_click_sound()
+        
+        try:
+            selected_path = filedialog.askdirectory(
+                title="اختر مجلد التنزيل",
+                initialdir=self.custom_download_path
+            )
+            
+            if selected_path and os.path.isdir(selected_path):
+                self.custom_download_path = selected_path
+                self.active_path_label.configure(
+                    text=f"مسار التنزيل الحالي: {format_path_for_display(selected_path, 50)}"
+                )
+                self.set_status(f"تم تغيير المجلد بنجاح إلى: {format_path_for_display(selected_path, 40)}")
+                self.status_label.configure(text_color=SUCCESS)
+            else:
+                self.set_status("لم يتم اختيار مجلد صحيح.")
+                self.status_label.configure(text_color=MUTED)
+        except Exception as e:
+            self.set_status(f"خطأ في اختيار المجلد: {str(e)[:100]}")
+            self.status_label.configure(text_color=DANGER)
 
     def select_video_format(self):
         play_click_sound()
@@ -507,8 +579,9 @@ class HadiApp(ctk.CTk):
         try:
             if not self.winfo_exists():
                 return
-            self.progress_var.set(max(0, min(percent, 100)) / 100)
-            self.progress_percent_label.configure(text=f"{max(0, min(percent, 100))}%")
+            percent = max(0, min(percent, 100))
+            self.progress_var.set(percent / 100)
+            self.progress_percent_label.configure(text=f"{percent}%")
             if status:
                 self.set_status(status)
         except Exception:
@@ -516,15 +589,21 @@ class HadiApp(ctk.CTk):
 
     def on_download_finished(self):
         """استدعاء عند انتهاء التحميل بنجاح"""
-        if self.winfo_exists():
-            self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
-            self.status_var.set("اكتمل التحميل بنجاح.")
-            self.status_label.configure(text_color=SUCCESS)
+        try:
+            if self.winfo_exists():
+                self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
+                self.status_var.set("اكتمل التحميل بنجاح ✓")
+                self.status_label.configure(text_color=SUCCESS)
+        except Exception:
+            pass
 
     def on_download_failed(self):
         """استدعاء عند فشل التحميل"""
-        if self.winfo_exists():
-            self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
+        try:
+            if self.winfo_exists():
+                self.download_btn.configure(state="normal", text="⬇️ تنزيل الآن")
+        except Exception:
+            pass
 
     def start_download(self):
         """بدء عملية التحميل"""
@@ -544,7 +623,7 @@ class HadiApp(ctk.CTk):
 
         self.download_btn.configure(state="disabled", text="جارٍ التحميل...")
         self.update_progress(0, "جارٍ التحقق من الرابط...")
-        self.download_worker = DownloadWorker(self, url, self.current_format)
+        self.download_worker = DownloadWorker(self, url, self.current_format, self.custom_download_path)
         self.download_worker.start()
 
 
